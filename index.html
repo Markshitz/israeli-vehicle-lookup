@@ -674,6 +674,32 @@
       return c;
     }
 
+    function isolateYellowPlateRegion(source) {
+      const w = source.width || source.naturalWidth;
+      const h = source.height || source.naturalHeight;
+      if (!w || !h) return null;
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(source, 0, 0);
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const data = imgData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const lum = (r + g + b) / 3;
+        const isYellow = (r > 110 && g > 100 && b < 230 && (r + g) > 230);
+        const isDark = lum < 130;
+        const keep = isYellow && isDark;
+        const v = keep ? 0 : 255;
+        data[i] = data[i + 1] = data[i + 2] = v;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      return c;
+    }
+
     async function runOcrAndSearch(imgElement) {
       try {
         isOcrRunning = true;
@@ -692,11 +718,21 @@
 
         opts.tessedit_pageseg_mode = '3';
         if (ocrCrop) {
-          showStatus('מזהה מספר רכב (אזור לוחית)...', 'processing');
-          const resCrop = await Tesseract.recognize(ocrCrop, 'eng', opts);
-          rawText = resCrop?.data?.text || '';
-          candidates = extractCandidatesFromWords(resCrop?.data?.words, ocrCrop.height) || [];
-          if (!candidates.length) candidates = extractCandidatesFromText(rawText);
+          const yellowCrop = isolateYellowPlateRegion(ocrCrop);
+          if (yellowCrop) {
+            showStatus('מזהה לוחית צהובה (ישראל)...', 'processing');
+            const resYellow = await Tesseract.recognize(yellowCrop, 'eng', opts);
+            rawText = resYellow?.data?.text || '';
+            candidates = extractCandidatesFromWords(resYellow?.data?.words, yellowCrop.height) || [];
+            if (!candidates.length) candidates = extractCandidatesFromText(rawText);
+          }
+          if (!candidates.length) {
+            showStatus('מזהה מספר רכב (אזור לוחית)...', 'processing');
+            const resCrop = await Tesseract.recognize(ocrCrop, 'eng', opts);
+            rawText = resCrop?.data?.text || '';
+            candidates = extractCandidatesFromWords(resCrop?.data?.words, ocrCrop.height) || [];
+            if (!candidates.length) candidates = extractCandidatesFromText(rawText);
+          }
         }
         if (!candidates.length && scaled) {
           showStatus('מנסה זיהוי על כל התמונה...', 'processing');
