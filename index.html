@@ -582,34 +582,59 @@
     }
  
     function extractCandidatesFromText(text) {
-      // לוקח את כל הספרות מהטקסט, ואז מחלץ רצפים של 7-8 ספרות
+      // לוקח את כל הספרות מהטקסט, מחלץ רצפים של 6-9 ספרות ומנרמל ל-7-8
       const digitsOnly = String(text || '').replace(/\D/g, '');
-      const matches = digitsOnly.match(/\d{7,8}/g) || [];
- 
-      // unique + שמירה על סדר
+      const matches = digitsOnly.match(/\d{6,9}/g) || [];
+
       const seen = new Set();
       const unique = [];
       for (const m of matches) {
-        if (!seen.has(m)) {
-          seen.add(m);
-          unique.push(m);
+        let candidates = [];
+        if (m.length === 7 || m.length === 8) {
+          candidates = [m];
+        } else if (m.length === 9) {
+          // OCR הוסיף ספרה - ננסה 8 ו-7 ספרות ראשונות
+          candidates = [m.slice(0, 8), m.slice(0, 7)];
+        }
+        // 6 ספרות לא נשלח ל-API (דורש 7-8) - משמיטים
+        for (const c of candidates) {
+          if ((c.length === 7 || c.length === 8) && !seen.has(c)) {
+            seen.add(c);
+            unique.push(c);
+          }
         }
       }
- 
-      // עד 5 מועמדים
+
       return unique.slice(0, 5);
     }
  
+    function scaleImageForOcr(imgElement, minSidePx) {
+      minSidePx = minSidePx || 400;
+      const w = imgElement.naturalWidth || imgElement.width;
+      const h = imgElement.naturalHeight || imgElement.height;
+      if (!w || !h) return imgElement;
+      const scale = Math.max(minSidePx / w, minSidePx / h, 1);
+      if (scale <= 1) return imgElement;
+      const c = document.createElement('canvas');
+      c.width = Math.round(w * scale);
+      c.height = Math.round(h * scale);
+      const ctx = c.getContext('2d');
+      ctx.drawImage(imgElement, 0, 0, c.width, c.height);
+      return c;
+    }
+
     async function runOcrAndSearch(imgElement) {
       try {
         isOcrRunning = true;
         showStatus('מזהה מספר רכב (OCR)...', 'processing');
- 
+
+        const ocrSource = scaleImageForOcr(imgElement, 500);
         const result = await Tesseract.recognize(
-          imgElement,
+          ocrSource,
           'eng',
           {
             tessedit_char_whitelist: '0123456789',
+            tessedit_pageseg_mode: '7',  // PSM 7 = single line (better for license plate)
             preserve_interword_spaces: '1'
           }
         );
