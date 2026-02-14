@@ -617,7 +617,33 @@
 
       return unique.slice(0, 8);
     }
- 
+
+    function extractCandidatesFromWords(words, imageHeight) {
+      if (!words || !imageHeight) return [];
+      const seen = new Set();
+      const withScore = [];
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        const text = (w.text || '').replace(/\D/g, '');
+        if (text.length < 5 || text.length > 9) continue;
+        const bbox = w.bbox || {};
+        const centerY = (bbox.y0 != null && bbox.y1 != null) ? (bbox.y0 + bbox.y1) / 2 : 0;
+        const score = centerY / imageHeight;
+        let toAdd = [];
+        if (text.length === 7 || text.length === 8) toAdd = [text];
+        else if (text.length === 9) toAdd = [text.slice(0, 8), text.slice(0, 7)];
+        else if (text.length === 5 || text.length === 6) toAdd = [text];
+        for (const c of toAdd) {
+          if (!seen.has(c)) {
+            seen.add(c);
+            withScore.push({ c: c, score: score });
+          }
+        }
+      }
+      withScore.sort(function(a, b) { return b.score - a.score; });
+      return withScore.map(function(x) { return x.c; }).slice(0, 8);
+    }
+
     function scaleImageForOcr(imgElement, minLongSidePx) {
       minLongSidePx = minLongSidePx || 1200;
       const w = imgElement.naturalWidth || imgElement.width;
@@ -655,7 +681,7 @@
 
         const scaled = scaleImageForOcr(imgElement, 2200);
         const cropSrc = scaled instanceof HTMLCanvasElement ? scaled : imgElement;
-        const ocrCrop = cropBottomForPlate(cropSrc, 0.5);
+        const ocrCrop = cropBottomForPlate(cropSrc, 0.35);
         const opts = {
           tessedit_char_whitelist: '0123456789',
           preserve_interword_spaces: '1'
@@ -669,19 +695,23 @@
           showStatus('מזהה מספר רכב (אזור לוחית)...', 'processing');
           const resCrop = await Tesseract.recognize(ocrCrop, 'eng', opts);
           rawText = resCrop?.data?.text || '';
-          candidates = extractCandidatesFromText(rawText);
+          candidates = extractCandidatesFromWords(resCrop?.data?.words, ocrCrop.height) || [];
+          if (!candidates.length) candidates = extractCandidatesFromText(rawText);
         }
         if (!candidates.length && scaled) {
           showStatus('מנסה זיהוי על כל התמונה...', 'processing');
           const resFull = await Tesseract.recognize(scaled, 'eng', opts);
           rawText = resFull?.data?.text || '';
-          candidates = extractCandidatesFromText(rawText);
+          const h = scaled instanceof HTMLCanvasElement ? scaled.height : (imgElement.naturalHeight || imgElement.height);
+          candidates = extractCandidatesFromWords(resFull?.data?.words, h) || [];
+          if (!candidates.length) candidates = extractCandidatesFromText(rawText);
         }
         if (!candidates.length && ocrCrop) {
           opts.tessedit_pageseg_mode = '7';
           const resLine = await Tesseract.recognize(ocrCrop, 'eng', opts);
           rawText = resLine?.data?.text || '';
-          candidates = extractCandidatesFromText(rawText);
+          candidates = extractCandidatesFromWords(resLine?.data?.words, ocrCrop.height) || [];
+          if (!candidates.length) candidates = extractCandidatesFromText(rawText);
         }
 
         const fullCandidates = candidates.filter(function(c) { return c.length === 7 || c.length === 8; });
