@@ -912,20 +912,76 @@
       document.getElementById('loading').style.display = 'block';
  
       try {
-        const response = await fetch(`${SERVER_URL}/api/vehicle/${plateNumber}`);
-        const result = await response.json();
- 
-        document.getElementById('loading').style.display = 'none';
- 
+        var response = await fetch(SERVER_URL + '/api/vehicle/' + plateNumber);
+        var result = await response.json();
+
         if (result.success && result.data) {
+          document.getElementById('loading').style.display = 'none';
           displayResults(result.data);
           showStatus(`נמצא רכב עבור: ${formatPlateNumber(plateNumber)}`, 'success');
           return;
         }
  
         // לא נמצא: מאפשר “מועמד הבא” אם יש
+        var variants = getConfusionVariants(plateNumber);
+        var tried = {};
+        tried[plateNumber] = true;
+        for (var vi = 0; vi < variants.length; vi++) {
+          var tryPlate = variants[vi];
+          if (tried[tryPlate]) continue;
+          tried[tryPlate] = true;
+          response = await fetch(SERVER_URL + '/api/vehicle/' + tryPlate);
+          result = await response.json();
+          if (result.success && result.data) {
+            document.getElementById('loading').style.display = 'none';
+            displayResults(result.data);
+            document.getElementById('plateInput').value = tryPlate;
+            showStatus('נמצא רכב: ' + formatPlateNumber(tryPlate) + ' (תיקון אוטומטי מ-' + formatPlateNumber(plateNumber) + ')', 'success');
+            return;
+          }
+        }
+        var level2 = [];
+        for (var vj = 0; vj < Math.min(variants.length, 12); vj++) {
+          var sub = getConfusionVariants(variants[vj]);
+          for (var sk = 0; sk < sub.length; sk++) {
+            if (!tried[sub[sk]]) { level2.push(sub[sk]); tried[sub[sk]] = true; }
+          }
+        }
+        for (vi = 0; vi < Math.min(level2.length, 25); vi++) {
+          tryPlate = level2[vi];
+          response = await fetch(SERVER_URL + '/api/vehicle/' + tryPlate);
+          result = await response.json();
+          if (result.success && result.data) {
+            document.getElementById('loading').style.display = 'none';
+            displayResults(result.data);
+            document.getElementById('plateInput').value = tryPlate;
+            showStatus('נמצא רכב: ' + formatPlateNumber(tryPlate) + ' (תיקון אוטומטי מ-' + formatPlateNumber(plateNumber) + ')', 'success');
+            return;
+          }
+        }
+        var level3 = [];
+        for (vj = 0; vj < Math.min(level2.length, 15); vj++) {
+          var sub2 = getConfusionVariants(level2[vj]);
+          for (sk = 0; sk < sub2.length; sk++) {
+            if (!tried[sub2[sk]]) { level3.push(sub2[sk]); tried[sub2[sk]] = true; }
+          }
+        }
+        for (vi = 0; vi < Math.min(level3.length, 20); vi++) {
+          tryPlate = level3[vi];
+          response = await fetch(SERVER_URL + '/api/vehicle/' + tryPlate);
+          result = await response.json();
+          if (result.success && result.data) {
+            document.getElementById('loading').style.display = 'none';
+            displayResults(result.data);
+            document.getElementById('plateInput').value = tryPlate;
+            showStatus('נמצא רכב: ' + formatPlateNumber(tryPlate) + ' (תיקון אוטומטי מ-' + formatPlateNumber(plateNumber) + ')', 'success');
+            return;
+          }
+        }
+
+        document.getElementById('loading').style.display = 'none';
         showError(result.message || 'לא נמצאו נתונים עבור מספר רישוי זה');
- 
+
         if (ocrCandidates.length > 1 && currentCandidateIndex < ocrCandidates.length - 1) {
           showStatus(
             `לא נמצא עבור ${formatPlateNumber(plateNumber)}. לחץ "נסה מועמד הבא".`,
@@ -948,6 +1004,28 @@
       if (s.length === 7) return s.substring(0, 2) + '-' + s.substring(2, 5) + '-' + s.substring(5);
       if (s.length === 8) return s.substring(0, 3) + '-' + s.substring(3, 5) + '-' + s.substring(5);
       return plate;
+    }
+
+    var CONFUSION_PAIRS = [['3','7'], ['1','7'], ['5','8'], ['8','5'], ['0','8'], ['6','8'], ['2','3']];
+    function getConfusionVariants(plateStr) {
+      if (!plateStr || (plateStr.length !== 7 && plateStr.length !== 8)) return [];
+      var out = [];
+      var arr = plateStr.split('');
+      for (var pos = 0; pos < arr.length; pos++) {
+        var ch = arr[pos];
+        for (var p = 0; p < CONFUSION_PAIRS.length; p++) {
+          var pair = CONFUSION_PAIRS[p];
+          var other = (ch === pair[0]) ? pair[1] : (ch === pair[1]) ? pair[0] : null;
+          if (other) {
+            var v = arr.slice();
+            v[pos] = other;
+            var s = v.join('');
+            if (s !== plateStr && out.indexOf(s) === -1) out.push(s);
+            break;
+          }
+        }
+      }
+      return out.slice(0, 25);
     }
  
     function displayResults(vehicle) {
