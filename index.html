@@ -404,6 +404,7 @@
           <div id="uploadArea" class="upload-area" onclick="document.getElementById('fileInput').click()">
             <div class="upload-icon">📷</div>
             <h4 style="margin-bottom: 8px;">לחץ או גרור תמונה</h4>
+            <p style="font-size: 13px; color: #555;">להצלחה מיטבית: צלם/חתוך רק את לוחית הרישוי מקרוב</p>
             <p style="font-size: 14px; color: #666;">נזהה מספר ונחפש. אם לא נמצא — תוכל לנסות מועמד הבא.</p>
             <input type="file" id="fileInput" accept="image/*" onchange="handleFileSelect(event)">
           </div>
@@ -608,12 +609,14 @@
       return unique.slice(0, 5);
     }
  
-    function scaleImageForOcr(imgElement, minSidePx) {
-      minSidePx = minSidePx || 400;
+    function scaleImageForOcr(imgElement, minLongSidePx) {
+      // בתמונה של רכב שלם הלוחית קטנה – מגדילים כך שהצלע הארוכה לפחות minLongSidePx
+      minLongSidePx = minLongSidePx || 1200;
       const w = imgElement.naturalWidth || imgElement.width;
       const h = imgElement.naturalHeight || imgElement.height;
       if (!w || !h) return imgElement;
-      const scale = Math.max(minSidePx / w, minSidePx / h, 1);
+      const long = Math.max(w, h);
+      const scale = long < minLongSidePx ? minLongSidePx / long : 1;
       if (scale <= 1) return imgElement;
       const c = document.createElement('canvas');
       c.width = Math.round(w * scale);
@@ -628,23 +631,26 @@
         isOcrRunning = true;
         showStatus('מזהה מספר רכב (OCR)...', 'processing');
 
-        const ocrSource = scaleImageForOcr(imgElement, 500);
-        const result = await Tesseract.recognize(
-          ocrSource,
-          'eng',
-          {
-            tessedit_char_whitelist: '0123456789',
-            tessedit_pageseg_mode: '7',  // PSM 7 = single line (better for license plate)
-            preserve_interword_spaces: '1'
-          }
-        );
- 
-        const rawText = (result?.data?.text || '');
- 
-        const candidates = extractCandidatesFromText(rawText);
- 
+        const ocrSource = scaleImageForOcr(imgElement, 1600);
+        const opts = {
+          tessedit_char_whitelist: '0123456789',
+          tessedit_pageseg_mode: '7',
+          preserve_interword_spaces: '1'
+        };
+        let result = await Tesseract.recognize(ocrSource, 'eng', opts);
+        let rawText = (result?.data?.text || '');
+        let candidates = extractCandidatesFromText(rawText);
+
         if (!candidates.length) {
-          showStatus('לא הצלחתי לזהות מספר. נסה תמונה חדה/קרובה יותר או הקלד ידנית.', 'error');
+          showStatus('מנסה שוב עם זיהוי אוטומטי...', 'processing');
+          opts.tessedit_pageseg_mode = '3';
+          result = await Tesseract.recognize(ocrSource, 'eng', opts);
+          rawText = (result?.data?.text || '');
+          candidates = extractCandidatesFromText(rawText);
+        }
+
+        if (!candidates.length) {
+          showStatus('לא הצלחתי לזהות מספר. בתמונה של רכב שלם הלוחית קטנה מדי – צלם רק את לוחית הרישוי מקרוב או הקלד ידנית (למשל 42-605-33).', 'error');
           isOcrRunning = false;
           return;
         }
