@@ -593,9 +593,9 @@
       // #region agent log
       _debugLog('index.html:extractCandidatesFromText', 'extractCandidatesFromText entry', { textLength: (text && text.length) || 0, textSnippet: (String(text || '').substring(0, 300)) }, 'H1');
       // #endregion
-      // לוקח את כל הספרות מהטקסט, מחלץ רצפים של 6-9 ספרות ומנרמל ל-7-8
+      // לוקח את כל הספרות מהטקסט, מחלץ רצפים של 5-9 ספרות (7-8 לשליחה ל-API, 5-6 להשלמה ידנית)
       const digitsOnly = String(text || '').replace(/\D/g, '');
-      const matches = digitsOnly.match(/\d{6,9}/g) || [];
+      const matches = digitsOnly.match(/\d{5,9}/g) || [];
       // #region agent log
       _debugLog('index.html:extractCandidatesFromText', 'after regex', { digitsOnlyLength: digitsOnly.length, digitsOnlySnippet: digitsOnly.substring(0, 100), matchesLength: matches.length, matches: matches.slice(0, 5) }, 'H2');
       // #endregion
@@ -603,27 +603,22 @@
       const seen = new Set();
       const unique = [];
       for (const m of matches) {
-        let candidates = [];
-        if (m.length === 7 || m.length === 8) {
-          candidates = [m];
-        } else if (m.length === 9) {
-          // OCR הוסיף ספרה - ננסה 8 ו-7 ספרות ראשונות
-          candidates = [m.slice(0, 8), m.slice(0, 7)];
-        }
-        // 6 ספרות לא נשלח ל-API (דורש 7-8) - משמיטים
-        for (const c of candidates) {
-          if ((c.length === 7 || c.length === 8) && !seen.has(c)) {
+        let toAdd = [];
+        if (m.length === 7 || m.length === 8) toAdd = [m];
+        else if (m.length === 9) toAdd = [m.slice(0, 8), m.slice(0, 7)];
+        else if (m.length === 5 || m.length === 6) toAdd = [m];
+        for (const c of toAdd) {
+          if (!seen.has(c)) {
             seen.add(c);
             unique.push(c);
           }
         }
       }
 
-      return unique.slice(0, 5);
+      return unique.slice(0, 8);
     }
  
     function scaleImageForOcr(imgElement, minLongSidePx) {
-      // בתמונה של רכב שלם הלוחית קטנה – מגדילים כך שהצלע הארוכה לפחות minLongSidePx
       minLongSidePx = minLongSidePx || 1200;
       const w = imgElement.naturalWidth || imgElement.width;
       const h = imgElement.naturalHeight || imgElement.height;
@@ -639,67 +634,84 @@
       return c;
     }
 
+    function cropBottomForPlate(imgElement, fraction) {
+      fraction = fraction == null ? 0.5 : fraction;
+      const w = imgElement.naturalWidth || imgElement.width;
+      const h = imgElement.naturalHeight || imgElement.height;
+      if (!w || !h) return null;
+      const cropH = Math.max(80, Math.round(h * fraction));
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = cropH;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(imgElement, 0, h - cropH, w, cropH, 0, 0, w, cropH);
+      return c;
+    }
+
     async function runOcrAndSearch(imgElement) {
       try {
         isOcrRunning = true;
         showStatus('מזהה מספר רכב (OCR)...', 'processing');
 
-        const ocrSource = scaleImageForOcr(imgElement, 1600);
-        // #region agent log
-        const nw = imgElement.naturalWidth || imgElement.width || 0;
-        const nh = imgElement.naturalHeight || imgElement.height || 0;
-        _debugLog('index.html:runOcrAndSearch', 'OCR source', {
-          imgW: nw, imgH: nh, ocrSourceIsCanvas: ocrSource instanceof HTMLCanvasElement,
-          ocrSourceW: ocrSource instanceof HTMLCanvasElement ? ocrSource.width : null,
-          ocrSourceH: ocrSource instanceof HTMLCanvasElement ? ocrSource.height : null
-        }, 'H3');
-        // #endregion
+        const scaled = scaleImageForOcr(imgElement, 2200);
+        const cropSrc = scaled instanceof HTMLCanvasElement ? scaled : imgElement;
+        const ocrCrop = cropBottomForPlate(cropSrc, 0.5);
         const opts = {
           tessedit_char_whitelist: '0123456789',
-          tessedit_pageseg_mode: '7',
           preserve_interword_spaces: '1'
         };
-        let result = await Tesseract.recognize(ocrSource, 'eng', opts);
-        let rawText = (result?.data?.text || '');
-        let candidates = extractCandidatesFromText(rawText);
-        // #region agent log
-        _debugLog('index.html:runOcrAndSearch', 'after first OCR (PSM 7)', { rawTextLength: rawText.length, rawTextSnippet: rawText.substring(0, 200), candidatesLength: candidates.length }, 'H1');
-        // #endregion
 
-        if (!candidates.length) {
-          showStatus('מנסה שוב עם זיהוי אוטומטי...', 'processing');
-          opts.tessedit_pageseg_mode = '3';
-          result = await Tesseract.recognize(ocrSource, 'eng', opts);
-          rawText = (result?.data?.text || '');
+        let candidates = [];
+        let rawText = '';
+
+        opts.tessedit_pageseg_mode = '3';
+        if (ocrCrop) {
+          showStatus('מזהה מספר רכב (אזור לוחית)...', 'processing');
+          const resCrop = await Tesseract.recognize(ocrCrop, 'eng', opts);
+          rawText = resCrop?.data?.text || '';
           candidates = extractCandidatesFromText(rawText);
-          // #region agent log
-          _debugLog('index.html:runOcrAndSearch', 'after second OCR (PSM 3)', { rawTextLength: rawText.length, rawTextSnippet: rawText.substring(0, 200), candidatesLength: candidates.length }, 'H4');
-          // #endregion
+        }
+        if (!candidates.length && scaled) {
+          showStatus('מנסה זיהוי על כל התמונה...', 'processing');
+          const resFull = await Tesseract.recognize(scaled, 'eng', opts);
+          rawText = resFull?.data?.text || '';
+          candidates = extractCandidatesFromText(rawText);
+        }
+        if (!candidates.length && ocrCrop) {
+          opts.tessedit_pageseg_mode = '7';
+          const resLine = await Tesseract.recognize(ocrCrop, 'eng', opts);
+          rawText = resLine?.data?.text || '';
+          candidates = extractCandidatesFromText(rawText);
         }
 
-        if (!candidates.length) {
+        const fullCandidates = candidates.filter(function(c) { return c.length === 7 || c.length === 8; });
+        const partialCandidates = candidates.filter(function(c) { return c.length === 5 || c.length === 6; });
+
+        if (fullCandidates.length) {
+          ocrCandidates = fullCandidates;
+          currentCandidateIndex = 0;
+          document.getElementById('plateInput').value = ocrCandidates[currentCandidateIndex];
+          renderCandidates();
+          setTryNextEnabled();
+          showStatus(
+            'זוהו ' + ocrCandidates.length + ' מועמדים. מנסה: ' + formatPlateNumber(ocrCandidates[currentCandidateIndex]),
+            'success'
+          );
+          await searchVehicle(ocrCandidates[currentCandidateIndex]);
+        } else if (partialCandidates.length) {
+          ocrCandidates = [];
+          currentCandidateIndex = -1;
+          document.getElementById('plateInput').value = partialCandidates[0];
+          resetCandidatesUI();
+          showStatus('זוהו ' + partialCandidates[0].length + ' ספרות – השלם ל-7–8 ספרות והחפש.', 'info');
+        } else {
           // #region agent log
           _debugLog('index.html:runOcrAndSearch', 'no candidates - showing error', { finalRawTextLength: rawText.length, finalRawTextSnippet: rawText.substring(0, 400), candidatesLength: candidates.length }, 'H5');
           // #endregion
-          showStatus('לא הצלחתי לזהות מספר. בתמונה של רכב שלם הלוחית קטנה מדי – צלם רק את לוחית הרישוי מקרוב או הקלד ידנית (למשל 42-605-33).', 'error');
+          showStatus('לא הצלחתי לזהות מספר. נסה תמונה חדה/קרובה יותר של הלוחית או הקלד ידנית.', 'error');
           isOcrRunning = false;
           return;
         }
- 
-        ocrCandidates = candidates;
-        currentCandidateIndex = 0;
- 
-        document.getElementById('plateInput').value = ocrCandidates[currentCandidateIndex];
- 
-        renderCandidates();
-        setTryNextEnabled();
- 
-        showStatus(
-          `זוהו ${ocrCandidates.length} מועמדים. מנסה: ${formatPlateNumber(ocrCandidates[currentCandidateIndex])}`,
-          'success'
-        );
- 
-        await searchVehicle(ocrCandidates[currentCandidateIndex]);
       } catch (err) {
         showStatus(`שגיאת OCR: ${err?.message || 'unknown error'}`, 'error');
       } finally {
