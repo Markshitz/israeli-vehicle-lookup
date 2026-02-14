@@ -622,18 +622,43 @@
       if (!words || !imageHeight) return [];
       const seen = new Set();
       const withScore = [];
-      for (let i = 0; i < words.length; i++) {
-        const w = words[i];
-        const text = (w.text || '').replace(/\D/g, '');
+
+      var digitWords = [];
+      for (var i = 0; i < words.length; i++) {
+        var t = (words[i].text || '').replace(/\D/g, '');
+        if (t.length === 0) continue;
+        var bbox = words[i].bbox || {};
+        var cx = (bbox.x0 != null && bbox.x1 != null) ? (bbox.x0 + bbox.x1) / 2 : 0;
+        var cy = (bbox.y0 != null && bbox.y1 != null) ? (bbox.y0 + bbox.y1) / 2 : 0;
+        digitWords.push({ text: t, x: cx, y: cy });
+      }
+      digitWords.sort(function(a, b) { return a.x - b.x || a.y - b.y; });
+      var merged = digitWords.map(function(w) { return w.text; }).join('');
+      if (merged.length >= 5 && merged.length <= 9) {
+        var score = digitWords.length ? digitWords.reduce(function(s, w) { return s + w.y; }, 0) / digitWords.length / imageHeight : 0;
+        if (merged.length === 7 || merged.length === 8) {
+          if (!seen.has(merged)) { seen.add(merged); withScore.push({ c: merged, score: score }); }
+        } else if (merged.length === 9) {
+          if (!seen.has(merged.slice(0, 8))) { seen.add(merged.slice(0, 8)); withScore.push({ c: merged.slice(0, 8), score: score }); }
+          if (!seen.has(merged.slice(0, 7))) { seen.add(merged.slice(0, 7)); withScore.push({ c: merged.slice(0, 7), score: score }); }
+        } else {
+          if (!seen.has(merged)) { seen.add(merged); withScore.push({ c: merged, score: score }); }
+        }
+      }
+
+      for (i = 0; i < words.length; i++) {
+        var w = words[i];
+        var text = (w.text || '').replace(/\D/g, '');
         if (text.length < 5 || text.length > 9) continue;
-        const bbox = w.bbox || {};
-        const centerY = (bbox.y0 != null && bbox.y1 != null) ? (bbox.y0 + bbox.y1) / 2 : 0;
-        const score = centerY / imageHeight;
-        let toAdd = [];
+        var bbox = w.bbox || {};
+        var centerY = (bbox.y0 != null && bbox.y1 != null) ? (bbox.y0 + bbox.y1) / 2 : 0;
+        var score = centerY / imageHeight;
+        var toAdd = [];
         if (text.length === 7 || text.length === 8) toAdd = [text];
         else if (text.length === 9) toAdd = [text.slice(0, 8), text.slice(0, 7)];
         else if (text.length === 5 || text.length === 6) toAdd = [text];
-        for (const c of toAdd) {
+        for (var j = 0; j < toAdd.length; j++) {
+          var c = toAdd[j];
           if (!seen.has(c)) {
             seen.add(c);
             withScore.push({ c: c, score: score });
@@ -641,7 +666,12 @@
         }
       }
       withScore.sort(function(a, b) { return b.score - a.score; });
-      return withScore.map(function(x) { return x.c; }).slice(0, 8);
+      var out = [];
+      for (i = 0; i < withScore.length; i++) {
+        var x = withScore[i].c;
+        if (x.length >= 5 && x.length <= 8) out.push(x);
+      }
+      return out.slice(0, 8);
     }
 
     function scaleImageForOcr(imgElement, minLongSidePx) {
@@ -718,21 +748,24 @@
 
         opts.tessedit_pageseg_mode = '3';
         if (ocrCrop) {
-          const yellowCrop = isolateYellowPlateRegion(ocrCrop);
+          var fromYellow = [];
+          var yellowCrop = isolateYellowPlateRegion(ocrCrop);
           if (yellowCrop) {
             showStatus('מזהה לוחית צהובה (ישראל)...', 'processing');
-            const resYellow = await Tesseract.recognize(yellowCrop, 'eng', opts);
-            rawText = resYellow?.data?.text || '';
-            candidates = extractCandidatesFromWords(resYellow?.data?.words, yellowCrop.height) || [];
-            if (!candidates.length) candidates = extractCandidatesFromText(rawText);
+            var resYellow = await Tesseract.recognize(yellowCrop, 'eng', opts);
+            var txtYellow = resYellow && resYellow.data && resYellow.data.text ? resYellow.data.text : '';
+            fromYellow = extractCandidatesFromWords(resYellow && resYellow.data && resYellow.data.words, yellowCrop.height) || [];
+            if (!fromYellow.length) fromYellow = extractCandidatesFromText(txtYellow);
           }
-          if (!candidates.length) {
-            showStatus('מזהה מספר רכב (אזור לוחית)...', 'processing');
-            const resCrop = await Tesseract.recognize(ocrCrop, 'eng', opts);
-            rawText = resCrop?.data?.text || '';
-            candidates = extractCandidatesFromWords(resCrop?.data?.words, ocrCrop.height) || [];
-            if (!candidates.length) candidates = extractCandidatesFromText(rawText);
-          }
+          showStatus('מזהה מספר רכב (אזור לוחית)...', 'processing');
+          var resCrop = await Tesseract.recognize(ocrCrop, 'eng', opts);
+          rawText = resCrop && resCrop.data && resCrop.data.text ? resCrop.data.text : '';
+          var fromCrop = extractCandidatesFromWords(resCrop && resCrop.data && resCrop.data.words, ocrCrop.height) || [];
+          if (!fromCrop.length) fromCrop = extractCandidatesFromText(rawText);
+          var seenMerge = {};
+          candidates = [];
+          fromCrop.forEach(function(c) { if (!seenMerge[c]) { seenMerge[c] = true; candidates.push(c); } });
+          fromYellow.forEach(function(c) { if (!seenMerge[c]) { seenMerge[c] = true; candidates.push(c); } });
         }
         if (!candidates.length && scaled) {
           showStatus('מנסה זיהוי על כל התמונה...', 'processing');
