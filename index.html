@@ -468,7 +468,14 @@
     // candidates state
     let ocrCandidates = [];
     let currentCandidateIndex = -1;
- 
+
+    // #region agent log
+    function _debugLog(location, message, data, hypothesisId) {
+      const payload = { location, message, data: data || {}, timestamp: Date.now(), hypothesisId };
+      fetch('http://127.0.0.1:7242/ingest/0a3fcd45-4279-4bcf-a794-aa2ba6df3f6f', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(function() {});
+    }
+    // #endregion
+
     // Server URL
     const SERVER_URL = 'https://israeli-vehicle-lookup.onrender.com';
  
@@ -583,9 +590,15 @@
     }
  
     function extractCandidatesFromText(text) {
+      // #region agent log
+      _debugLog('index.html:extractCandidatesFromText', 'extractCandidatesFromText entry', { textLength: (text && text.length) || 0, textSnippet: (String(text || '').substring(0, 300)) }, 'H1');
+      // #endregion
       // לוקח את כל הספרות מהטקסט, מחלץ רצפים של 6-9 ספרות ומנרמל ל-7-8
       const digitsOnly = String(text || '').replace(/\D/g, '');
       const matches = digitsOnly.match(/\d{6,9}/g) || [];
+      // #region agent log
+      _debugLog('index.html:extractCandidatesFromText', 'after regex', { digitsOnlyLength: digitsOnly.length, digitsOnlySnippet: digitsOnly.substring(0, 100), matchesLength: matches.length, matches: matches.slice(0, 5) }, 'H2');
+      // #endregion
 
       const seen = new Set();
       const unique = [];
@@ -632,6 +645,15 @@
         showStatus('מזהה מספר רכב (OCR)...', 'processing');
 
         const ocrSource = scaleImageForOcr(imgElement, 1600);
+        // #region agent log
+        const nw = imgElement.naturalWidth || imgElement.width || 0;
+        const nh = imgElement.naturalHeight || imgElement.height || 0;
+        _debugLog('index.html:runOcrAndSearch', 'OCR source', {
+          imgW: nw, imgH: nh, ocrSourceIsCanvas: ocrSource instanceof HTMLCanvasElement,
+          ocrSourceW: ocrSource instanceof HTMLCanvasElement ? ocrSource.width : null,
+          ocrSourceH: ocrSource instanceof HTMLCanvasElement ? ocrSource.height : null
+        }, 'H3');
+        // #endregion
         const opts = {
           tessedit_char_whitelist: '0123456789',
           tessedit_pageseg_mode: '7',
@@ -640,6 +662,9 @@
         let result = await Tesseract.recognize(ocrSource, 'eng', opts);
         let rawText = (result?.data?.text || '');
         let candidates = extractCandidatesFromText(rawText);
+        // #region agent log
+        _debugLog('index.html:runOcrAndSearch', 'after first OCR (PSM 7)', { rawTextLength: rawText.length, rawTextSnippet: rawText.substring(0, 200), candidatesLength: candidates.length }, 'H1');
+        // #endregion
 
         if (!candidates.length) {
           showStatus('מנסה שוב עם זיהוי אוטומטי...', 'processing');
@@ -647,9 +672,15 @@
           result = await Tesseract.recognize(ocrSource, 'eng', opts);
           rawText = (result?.data?.text || '');
           candidates = extractCandidatesFromText(rawText);
+          // #region agent log
+          _debugLog('index.html:runOcrAndSearch', 'after second OCR (PSM 3)', { rawTextLength: rawText.length, rawTextSnippet: rawText.substring(0, 200), candidatesLength: candidates.length }, 'H4');
+          // #endregion
         }
 
         if (!candidates.length) {
+          // #region agent log
+          _debugLog('index.html:runOcrAndSearch', 'no candidates - showing error', { finalRawTextLength: rawText.length, finalRawTextSnippet: rawText.substring(0, 400), candidatesLength: candidates.length }, 'H5');
+          // #endregion
           showStatus('לא הצלחתי לזהות מספר. בתמונה של רכב שלם הלוחית קטנה מדי – צלם רק את לוחית הרישוי מקרוב או הקלד ידנית (למשל 42-605-33).', 'error');
           isOcrRunning = false;
           return;
