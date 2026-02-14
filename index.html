@@ -593,7 +593,7 @@
       // #region agent log
       _debugLog('index.html:extractCandidatesFromText', 'extractCandidatesFromText entry', { textLength: (text && text.length) || 0, textSnippet: (String(text || '').substring(0, 300)) }, 'H1');
       // #endregion
-      // לוקח את כל הספרות מהטקסט, מחלץ רצפים של 5-9 ספרות (7-8 לשליחה ל-API, 5-6 להשלמה ידנית)
+      // לוחית ישראלית: 7 ספרות (XX-XXX-XX) או 8 (XXX-XX-XXX), קריאה משמאל לימין
       const digitsOnly = String(text || '').replace(/\D/g, '');
       const matches = digitsOnly.match(/\d{5,9}/g) || [];
       // #region agent log
@@ -603,11 +603,15 @@
       const seen = new Set();
       const unique = [];
       for (const m of matches) {
-        let toAdd = [];
-        if (m.length === 7 || m.length === 8) toAdd = [m];
-        else if (m.length === 9) toAdd = [m.slice(0, 8), m.slice(0, 7)];
+        var toAdd = [];
+        if (m.length === 7 || m.length === 8) {
+          toAdd = [m];
+          var rev = m.split('').reverse().join('');
+          if (rev !== m) toAdd.push(rev);
+        } else if (m.length === 9) toAdd = [m.slice(0, 8), m.slice(0, 7)];
         else if (m.length === 5 || m.length === 6) toAdd = [m];
-        for (const c of toAdd) {
+        for (var ci = 0; ci < toAdd.length; ci++) {
+          var c = toAdd[ci];
           if (!seen.has(c)) {
             seen.add(c);
             unique.push(c);
@@ -622,7 +626,7 @@
       if (!words || !imageHeight) return [];
       const seen = new Set();
       const withScore = [];
-
+      // לוחית ישראלית: ספרות משמאל לימין – ממיינים לפי x (שמאל = x קטן = ספרה ראשונה)
       var digitWords = [];
       for (var i = 0; i < words.length; i++) {
         var t = (words[i].text || '').replace(/\D/g, '');
@@ -751,6 +755,7 @@
         const scaled = scaleImageForOcr(imgElement, 2200);
         const cropSrc = scaled instanceof HTMLCanvasElement ? scaled : imgElement;
         const ocrCrop = cropBottomForPlate(cropSrc, 0.35);
+        // לוחית ישראלית: צהובה, 7 (2-3-2) או 8 (3-2-3) ספרות, משמאל לימין
         const opts = {
           tessedit_char_whitelist: '0123456789',
           preserve_interword_spaces: '1'
@@ -938,11 +943,10 @@
     }
  
     function formatPlateNumber(plate) {
-      if (plate.length === 7) {
-        return `${plate.substring(0, 2)}-${plate.substring(2, 5)}-${plate.substring(5)}`;
-      } else if (plate.length === 8) {
-        return `${plate.substring(0, 3)}-${plate.substring(3, 5)}-${plate.substring(5)}`;
-      }
+      if (!plate) return '';
+      var s = String(plate).replace(/\D/g, '');
+      if (s.length === 7) return s.substring(0, 2) + '-' + s.substring(2, 5) + '-' + s.substring(5);
+      if (s.length === 8) return s.substring(0, 3) + '-' + s.substring(3, 5) + '-' + s.substring(5);
       return plate;
     }
  
